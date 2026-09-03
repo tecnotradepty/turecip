@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finanzas Personales | Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans min-h-screen">
+
+    <!-- Navbar -->
+    <nav class="bg-white shadow-sm px-6 py-4 flex justify-between items-center">
+        <div class="font-bold text-xl text-blue-600">Finanzas P2P</div>
+        <div class="flex items-center gap-4">
+            <span id="user-greeting" class="text-sm font-medium text-gray-600">Cargando...</span>
+            <button onclick="logout()" class="text-sm bg-red-50 text-red-600 px-3 py-1.5 rounded hover:bg-red-100 transition">
+                Cerrar Sesión
+            </button>
+        </div>
+    </nav>
+
+    <main class="max-w-6xl mx-auto p-6">
+        
+        <!-- Alerta de Sistema -->
+        <div id="system-alert" class="hidden mb-6 px-4 py-3 rounded text-sm font-medium"></div>
+
+        <!-- Tarjetas de Resumen -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-green-500">
+                <p class="text-gray-500 text-sm mb-1">Ingresos Totales</p>
+                <h3 id="card-ingresos" class="text-2xl font-bold text-gray-800">$0.00</h3>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-red-500">
+                <p class="text-gray-500 text-sm mb-1">Gastos Totales</p>
+                <h3 id="card-gastos" class="text-2xl font-bold text-gray-800">$0.00</h3>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border-l-4 border-blue-500">
+                <p class="text-gray-500 text-sm mb-1">Balance Actual</p>
+                <h3 id="card-balance" class="text-2xl font-bold text-gray-800">$0.00</h3>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Formulario para agregar transacción -->
+            <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm">
+                <h2 class="text-lg font-bold mb-4 border-b pb-2">Nueva Transacción</h2>
+                <form id="tx-form" onsubmit="handleAddTransaction(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Tipo</label>
+                        <select id="tx-tipo" class="w-full border rounded p-2 focus:ring focus:ring-blue-200 outline-none">
+                            <option value="gasto">Gasto</option>
+                            <option value="ingreso">Ingreso</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Monto ($)</label>
+                        <input type="number" step="0.01" id="tx-monto" required class="w-full border rounded p-2 focus:ring focus:ring-blue-200 outline-none" placeholder="Ej: 50.00">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Descripción</label>
+                        <input type="text" id="tx-desc" required class="w-full border rounded p-2 focus:ring focus:ring-blue-200 outline-none" placeholder="Ej: Supermercado">
+                    </div>
+                    <button type="submit" id="btn-submit" class="w-full bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700 transition flex justify-center">
+                        Guardar Transacción
+                    </button>
+                </form>
+            </div>
+
+            <!-- Tabla de Historial -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h2 class="text-lg font-bold">Historial Reciente</h2>
+                    <button onclick="loadData()" class="text-sm text-blue-600 hover:underline">↻ Actualizar</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="text-gray-500 bg-gray-50">
+                            <tr>
+                                <th class="p-3">Fecha</th>
+                                <th class="p-3">Descripción</th>
+                                <th class="p-3">Tipo</th>
+                                <th class="p-3 text-right">Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tx-table-body" class="divide-y">
+                            <tr>
+                                <td colspan="4" class="p-4 text-center text-gray-500">Cargando transacciones...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // 1. Verificación de Seguridad Inicial
+        const USER_API = localStorage.getItem('user_api');
+        const USERNAME = localStorage.getItem('username');
+
+        if (!USER_API || !USERNAME) {
+            window.location.href = 'index.html'; // Si no hay sesión, regresamos al login
+        }
+
+        document.getElementById('user-greeting').textContent = `Hola, ${USERNAME}`;
+
+        // 2. Función Core para comunicarse con la API personal del usuario
+        async function fetchUserApi(action, payload = {}) {
+            try {
+                const response = await fetch(USER_API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action, ...payload })
+                });
+                return await response.json();
+            } catch (error) {
+                console.error("Error API:", error);
+                return { success: false, message: "Error de red" };
+            }
+        }
+
+        // 3. Inicialización (Configurar hojas y cargar datos)
+        async function initDashboard() {
+            showAlert("Conectando con tu Google Sheets...", "blue");
+            
+            // Verificamos y creamos las tablas si no existen
+            const setupRes = await fetchUserApi('setup');
+            if(setupRes.success) {
+                showAlert("Base de datos conectada. Cargando información...", "blue");
+                await loadData();
+            } else {
+                showAlert("Error al configurar tu Excel. Verifica tu URL.", "red");
+            }
+        }
+
+        // 4. Cargar y renderizar datos
+        async function loadData() {
+            const res = await fetchUserApi('getTransactions');
+            
+            if (res.success) {
+                renderTable(res.data);
+                updateSummary(res.data);
+                hideAlert();
+            } else {
+                showAlert("No se pudieron cargar las transacciones.", "red");
+            }
+        }
+
+        function renderTable(transactions) {
+            const tbody = document.getElementById('tx-table-body');
+            tbody.innerHTML = '';
+
+            if (transactions.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-500">No hay transacciones aún.</td></tr>`;
+                return;
+            }
+
+            // Invertimos para mostrar las más recientes arriba
+            transactions.reverse().forEach(tx => {
+                const isGasto = tx.tipo === 'gasto';
+                const colorClase = isGasto ? 'text-red-600' : 'text-green-600';
+                const signo = isGasto ? '-' : '+';
+                
+                // Formateamos la fecha (tx.fecha suele venir como string ISO)
+                const fechaFormat = new Date(tx.fecha).toLocaleDateString();
+
+                const row = `
+                    <tr class="hover:bg-gray-50 transition">
+                        <td class="p-3 text-gray-600">${fechaFormat}</td>
+                        <td class="p-3 font-medium">${tx.descripcion}</td>
+                        <td class="p-3"><span class="px-2 py-1 bg-gray-100 rounded text-xs uppercase">${tx.tipo}</span></td>
+                        <td class="p-3 text-right font-bold ${colorClase}">${signo}$${parseFloat(tx.monto).toFixed(2)}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+
+        function updateSummary(transactions) {
+            let ingresos = 0;
+            let gastos = 0;
+
+            transactions.forEach(tx => {
+                const monto = parseFloat(tx.monto);
+                if (tx.tipo === 'ingreso') ingresos += monto;
+                if (tx.tipo === 'gasto') gastos += monto;
+            });
+
+            document.getElementById('card-ingresos').textContent = `$${ingresos.toFixed(2)}`;
+            document.getElementById('card-gastos').textContent = `$${gastos.toFixed(2)}`;
+            document.getElementById('card-balance').textContent = `$${(ingresos - gastos).toFixed(2)}`;
+        }
+
+        // 5. Agregar Nueva Transacción
+        async function handleAddTransaction(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btn-submit');
+            btn.innerText = "Guardando...";
+            btn.disabled = true;
+
+            const tipo = document.getElementById('tx-tipo').value;
+            const monto = document.getElementById('tx-monto').value;
+            const desc = document.getElementById('tx-desc').value;
+
+            const res = await fetchUserApi('addTransaction', {
+                tipo: tipo,
+                monto: monto,
+                descripcion: desc,
+                fecha: new Date().toISOString()
+            });
+
+            if (res.success) {
+                document.getElementById('tx-form').reset();
+                await loadData(); // Recarga la tabla en tiempo real
+            } else {
+                alert("Error al guardar la transacción");
+            }
+
+            btn.innerText = "Guardar Transacción";
+            btn.disabled = false;
+        }
+
+        // Utilidades de UI
+        function showAlert(msg, color) {
+            const alertBox = document.getElementById('system-alert');
+            alertBox.textContent = msg;
+            alertBox.className = `mb-6 px-4 py-3 rounded text-sm font-medium block bg-${color}-100 text-${color}-700`;
+        }
+
+        function hideAlert() {
+            document.getElementById('system-alert').classList.add('hidden');
+            document.getElementById('system-alert').classList.remove('block');
+        }
+
+        function logout() {
+            localStorage.clear();
+            window.location.href = 'index.html';
+        }
+
+        // Iniciar la app al cargar
+        initDashboard();
+    </script>
+</body>
+</html>
